@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>8x8 Q-Table Grid Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-7xl space-y-6 p-6">
+    <header class="flex flex-col gap-4 rounded-3xl bg-white p-6 shadow-sm md:flex-row md:items-center md:justify-between">
+      <div>
+        <div class="mb-2 inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+          Traditional Q-Table
+        </div>
+        <h1 class="text-3xl font-bold tracking-tight">8x8 Q-Table Grid Visualizer</h1>
+        <p class="mt-2 max-w-3xl text-slate-600">
+          Each grid cell is one state. The four numbers inside each state are Q-values for Up, Down, Left, and Right. The arrow shows the action with the highest Q-value.
+        </p>
+      </div>
+
+      <div class="flex flex-wrap gap-2">
+        <button id="regenerateBtn" class="rounded-2xl bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-700">
+          Regenerate Q-values
+        </button>
+        <button id="randomBtn" class="rounded-2xl border border-slate-300 bg-white px-4 py-2 font-semibold hover:bg-slate-100">
+          Random start/goal
+        </button>
+        <button id="resetBtn" class="rounded-2xl border border-slate-300 bg-white px-4 py-2 font-semibold hover:bg-slate-100">
+          Reset
+        </button>
+      </div>
+    </header>
+
+    <section class="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <div class="rounded-3xl bg-white p-4 shadow-sm">
+        <div id="grid" class="grid grid-cols-8 gap-2"></div>
+      </div>
+
+      <aside class="space-y-4">
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 id="selectedTitle" class="text-xl font-bold">Selected state: S0</h2>
+          <p id="bestAction" class="mt-1 text-sm text-slate-600">Best action: Right</p>
+
+          <div id="qDetails" class="mt-4 grid grid-cols-2 gap-3"></div>
+
+          <div class="mt-4 rounded-2xl bg-slate-100 p-3 text-sm text-slate-700">
+            Greedy policy rule: choose <strong>argmax_a Q(s,a)</strong>. That means: choose the action with the largest Q-value in the current state.
+          </div>
+        </section>
+
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 class="text-xl font-bold">Controls</h2>
+
+          <label class="mt-4 block space-y-2">
+            <div class="flex items-center justify-between text-sm">
+              <span>Start state</span>
+              <strong id="startLabel">S0</strong>
+            </div>
+            <input id="startSlider" type="range" min="0" max="63" step="1" value="0" class="w-full" />
+          </label>
+
+          <label class="mt-4 block space-y-2">
+            <div class="flex items-center justify-between text-sm">
+              <span>Goal state</span>
+              <strong id="goalLabel">S63</strong>
+            </div>
+            <input id="goalSlider" type="range" min="0" max="63" step="1" value="63" class="w-full" />
+          </label>
+
+          <label class="mt-4 block space-y-2">
+            <div class="flex items-center justify-between text-sm">
+              <span>Noise / uncertainty</span>
+              <strong id="noiseLabel">0.08</strong>
+            </div>
+            <input id="noiseSlider" type="range" min="0" max="0.5" step="0.01" value="0.08" class="w-full" />
+          </label>
+        </section>
+
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 class="text-xl font-bold">How to use the result</h2>
+          <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-700">
+            <li>Pick a start state and a goal state.</li>
+            <li>Look inside each cell: top = Up, bottom = Down, left = Left, right = Right.</li>
+            <li>The center arrow is the best action for that state.</li>
+            <li>Follow arrows from the start cell to see the learned greedy policy.</li>
+            <li>Click any cell to inspect its exact Q-values.</li>
+          </ol>
+          <div id="pathBox" class="mt-4 rounded-2xl bg-slate-100 p-3 text-sm"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const GRID_SIZE = 8;
+    const ACTIONS = ["U", "D", "L", "R"];
+    const ACTION_LABELS = { U: "Up", D: "Down", L: "Left", R: "Right" };
+    const ARROWS = { U: "↑", D: "↓", L: "←", R: "→" };
+
+    let goalState = 63;
+    let startState = 0;
+    let selectedState = 0;
+    let noise = 0.08;
+    let qTable = createInitialQTable(goalState, noise);
+
+    const grid = document.getElementById("grid");
+    const selectedTitle = document.getElementById("selectedTitle");
+    const bestActionEl = document.getElementById("bestAction");
+    const qDetails = document.getElementById("qDetails");
+    const pathBox = document.getElementById("pathBox");
+
+    const startSlider = document.getElementById("startSlider");
+    const goalSlider = document.getElementById("goalSlider");
+    const noiseSlider = document.getElementById("noiseSlider");
+    const startLabel = document.getElementById("startLabel");
+    const goalLabel = document.getElementById("goalLabel");
+    const noiseLabel = document.getElementById("noiseLabel");
+
+    document.getElementById("regenerateBtn").addEventListener("click", () => {
+      qTable = createInitialQTable(goalState, noise);
+      render();
+    });
+
+    document.getElementById("randomBtn").addEventListener("click", () => {
+      startState = Math.floor(Math.random() * 64);
+      goalState = Math.floor(Math.random() * 64);
+      while (goalState === startState) goalState = Math.floor(Math.random() * 64);
+      selectedState = startState;
+      qTable = createInitialQTable(goalState, noise);
+      syncControls();
+      render();
+    });
+
+    document.getElementById("resetBtn").addEventListener("click", () => {
+      startState = 0;
+      goalState = 63;
+      selectedState = 0;
+      noise = 0.08;
+      qTable = createInitialQTable(goalState, noise);
+      syncControls();
+      render();
+    });
+
+    startSlider.addEventListener("input", event => {
+      startState = Number(event.target.value);
+      selectedState = startState;
+      render();
+    });
+
+    goalSlider.addEventListener("input", event => {
+      goalState = Number(event.target.value);
+      qTable = createInitialQTable(goalState, noise);
+      render();
+    });
+
+    noiseSlider.addEventListener("input", event => {
+      noise = Number(event.target.value);
+      noiseLabel.textContent = noise.toFixed(2);
+    });
+
+    function stateId(row, col) {
+      return row * GRID_SIZE + col;
+    }
+
+    function posFromState(state) {
+      return {
+        row: Math.floor(state / GRID_SIZE),
+        col: state % GRID_SIZE
+      };
+    }
+
+    function createInitialQTable(goal, noiseAmount) {
+      const goalPos = posFromState(goal);
+
+      return Array.from({ length: GRID_SIZE * GRID_SIZE }, (_, state) => {
+        const { row, col } = posFromState(state);
+
+        if (state === goal) {
+          return { U: 0, D: 0, L: 0, R: 0 };
+        }
+
+        const q = {};
+
+        for (const action of ACTIONS) {
+          let nextRow = row;
+          let nextCol = col;
+
+          if (action === "U") nextRow -= 1;
+          if (action === "D") nextRow += 1;
+          if (action === "L") nextCol -= 1;
+          if (action === "R") nextCol += 1;
+
+          const invalid = nextRow < 0 || nextRow >= GRID_SIZE || nextCol < 0 || nextCol >= GRID_SIZE;
+
+          if (invalid) {
+            q[action] = -0.25;
+          } else {
+            const oldDistance = Math.abs(row - goalPos.row) + Math.abs(col - goalPos.col);
+            const newDistance = Math.abs(nextRow - goalPos.row) + Math.abs(nextCol - goalPos.col);
+            const progress = oldDistance - newDistance;
+            const distanceScore = 1 / (newDistance + 1);
+            const jitter = (Math.random() - 0.5) * noiseAmount;
+            q[action] = Number((0.25 * progress + distanceScore + jitter).toFixed(2));
+          }
+        }
+
+        return q;
+      });
+    }
+
+    function bestAction(qValues) {
+      return ACTIONS.reduce((best, action) => qValues[action] > qValues[best] ? action : best);
+    }
+
+    function getNextState(state, action) {
+      const { row, col } = posFromState(state);
+      let nextRow = row;
+      let nextCol = col;
+
+      if (action === "U") nextRow -= 1;
+      if (action === "D") nextRow += 1;
+      if (action === "L") nextCol -= 1;
+      if (action === "R") nextCol += 1;
+
+      if (nextRow < 0 || nextRow >= GRID_SIZE || nextCol < 0 || nextCol >= GRID_SIZE) {
+        return state;
+      }
+
+      return stateId(nextRow, nextCol);
+    }
+
+    function getPolicyPath() {
+      const visited = new Set();
+      const path = [startState];
+      let current = startState;
+
+      for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+        if (current === goalState || visited.has(current)) break;
+        visited.add(current);
+        const action = bestAction(qTable[current]);
+        const next = getNextState(current, action);
+        if (next === current) break;
+        path.push(next);
+        current = next;
+      }
+
+      return path;
+    }
+
+    function syncControls() {
+      startSlider.value = startState;
+      goalSlider.value = goalState;
+      noiseSlider.value = noise;
+      startLabel.textContent = `S${startState}`;
+      goalLabel.textContent = `S${goalState}`;
+      noiseLabel.textContent = noise.toFixed(2);
+    }
+
+    function renderGrid() {
+      grid.innerHTML = "";
+
+      qTable.forEach((qValues, state) => {
+        const best = bestAction(qValues);
+        const isStart = state === startState;
+        const isGoal = state === goalState;
+        const isSelected = state === selectedState;
+
+        const cell = document.createElement("button");
+        cell.className = [
+          "relative aspect-square rounded-2xl border p-1 text-xs transition hover:scale-[1.02] hover:shadow-md",
+          isSelected ? "border-slate-900 bg-slate-100 shadow-lg" : "border-slate-200 bg-white",
+          isGoal ? "ring-2 ring-emerald-400" : "",
+          isStart ? "ring-2 ring-blue-400" : ""
+        ].join(" ");
+
+        cell.innerHTML = `
+          <div class="absolute left-2 top-1 font-semibold text-slate-500">S${state}</div>
+          <div class="grid h-full grid-cols-3 grid-rows-3 items-center justify-items-center pt-3">
+            <span class="${best === "U" ? "font-bold text-slate-950" : "text-slate-500"}">${qValues.U.toFixed(2)}</span>
+            <span></span>
+            <span></span>
+
+            <span class="${best === "L" ? "font-bold text-slate-950" : "text-slate-500"}">${qValues.L.toFixed(2)}</span>
+            <span class="text-xl font-black text-slate-800">${isGoal ? "★" : ARROWS[best]}</span>
+            <span class="${best === "R" ? "font-bold text-slate-950" : "text-slate-500"}">${qValues.R.toFixed(2)}</span>
+
+            <span></span>
+            <span class="${best === "D" ? "font-bold text-slate-950" : "text-slate-500"}">${qValues.D.toFixed(2)}</span>
+            <span></span>
+          </div>
+          <div class="absolute bottom-1 left-1 flex gap-1">
+            ${isStart ? `<span class="rounded-full bg-slate-900 px-1 py-0 text-[10px] font-semibold text-white">Start</span>` : ""}
+            ${isGoal ? `<span class="rounded-full bg-emerald-600 px-1 py-0 text-[10px] font-semibold text-white">Goal</span>` : ""}
+          </div>
+        `;
+
+        cell.addEventListener("click", () => {
+          selectedState = state;
+          render();
+        });
+
+        grid.appendChild(cell);
+      });
+    }
+
+    function renderDetails() {
+      const selectedQ = qTable[selectedState];
+      const best = bestAction(selectedQ);
+
+      selectedTitle.textContent = `Selected state: S${selectedState}`;
+      bestActionEl.innerHTML = `Best action: <strong>${ACTION_LABELS[best]} ${ARROWS[best]}</strong>`;
+
+      qDetails.innerHTML = ACTIONS.map(action => `
+        <div class="rounded-2xl border p-3 ${action === best ? "border-slate-900 bg-slate-100" : "border-slate-200 bg-white"}">
+          <div class="text-sm text-slate-500">${ACTION_LABELS[action]}</div>
+          <div class="text-2xl font-bold">${selectedQ[action].toFixed(2)}</div>
+        </div>
+      `).join("");
+
+      const path = getPolicyPath();
+      pathBox.textContent = `Current greedy path from S${startState}: ${path.map(s => `S${s}`).join(" → ")}`;
+    }
+
+    function render() {
+      syncControls();
+      renderGrid();
+      renderDetails();
+    }
+
+    render();
+  </script>
+</body>
+</html>
