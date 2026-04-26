@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Q-Learning Grid World with Obstacles</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-7xl space-y-6 p-6">
+    <header class="rounded-3xl bg-white p-6 shadow-sm">
+      <div class="mb-2 inline-flex rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+        Q-Learning Grid World
+      </div>
+      <h1 class="text-3xl font-bold">8x8 Q-Table with Obstacles, Learning, Start, and Goal</h1>
+      <p class="mt-2 max-w-4xl text-slate-600">
+        Click cells to configure obstacles, start, and goal. Then train the Q-table and watch the agent follow the learned policy.
+      </p>
+    </header>
+
+    <section class="grid gap-6 lg:grid-cols-[1fr_390px]">
+      <div class="rounded-3xl bg-white p-4 shadow-sm">
+        <div id="grid" class="grid grid-cols-8 gap-2"></div>
+      </div>
+
+      <aside class="space-y-4">
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 class="text-xl font-bold">Configuration</h2>
+          <p class="mt-2 text-sm text-slate-600">Choose what clicking a cell does:</p>
+
+          <div class="mt-4 grid grid-cols-2 gap-2">
+            <button data-mode="obstacle" class="modeBtn rounded-2xl bg-slate-900 px-3 py-2 font-semibold text-white">Obstacle</button>
+            <button data-mode="start" class="modeBtn rounded-2xl border border-slate-300 bg-white px-3 py-2 font-semibold">Set start</button>
+            <button data-mode="goal" class="modeBtn rounded-2xl border border-slate-300 bg-white px-3 py-2 font-semibold">Set goal</button>
+            <button id="clearObstaclesBtn" class="rounded-2xl border border-slate-300 bg-white px-3 py-2 font-semibold hover:bg-slate-100">Clear walls</button>
+          </div>
+
+          <div class="mt-4 grid grid-cols-2 gap-2 text-sm">
+            <div class="rounded-2xl bg-blue-50 p-3">Start: <strong id="startLabel">S0</strong></div>
+            <div class="rounded-2xl bg-emerald-50 p-3">Goal: <strong id="goalLabel">S63</strong></div>
+          </div>
+        </section>
+
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 class="text-xl font-bold">Learning Controls</h2>
+
+          <div class="mt-4 grid grid-cols-2 gap-2">
+            <button id="trainOneBtn" class="rounded-2xl bg-slate-900 px-3 py-2 font-semibold text-white hover:bg-slate-700">Train 1 episode</button>
+            <button id="trainManyBtn" class="rounded-2xl bg-blue-600 px-3 py-2 font-semibold text-white hover:bg-blue-500">Train 500</button>
+            <button id="runBtn" class="rounded-2xl bg-emerald-600 px-3 py-2 font-semibold text-white hover:bg-emerald-500">Run policy</button>
+            <button id="resetAgentBtn" class="rounded-2xl border border-slate-300 bg-white px-3 py-2 font-semibold hover:bg-slate-100">Reset agent</button>
+            <button id="resetQBtn" class="col-span-2 rounded-2xl border border-red-300 bg-white px-3 py-2 font-semibold text-red-700 hover:bg-red-50">Reset Q-table</button>
+          </div>
+
+          <div class="mt-4 space-y-3 text-sm">
+            <label class="block">
+              Learning rate alpha: <strong id="alphaLabel">0.30</strong>
+              <input id="alphaSlider" type="range" min="0.01" max="1" step="0.01" value="0.30" class="w-full" />
+            </label>
+            <label class="block">
+              Discount gamma: <strong id="gammaLabel">0.90</strong>
+              <input id="gammaSlider" type="range" min="0" max="0.99" step="0.01" value="0.90" class="w-full" />
+            </label>
+            <label class="block">
+              Exploration epsilon: <strong id="epsilonLabel">0.20</strong>
+              <input id="epsilonSlider" type="range" min="0" max="1" step="0.01" value="0.20" class="w-full" />
+            </label>
+          </div>
+        </section>
+
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 class="text-xl font-bold">Status</h2>
+          <div id="statusBox" class="mt-3 rounded-2xl bg-slate-100 p-4 text-sm leading-6"></div>
+        </section>
+
+        <section class="rounded-3xl bg-white p-5 shadow-sm">
+          <h2 class="text-xl font-bold">How to use</h2>
+          <ol class="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-700">
+            <li>Use <strong>Obstacle</strong> mode and click cells to add/remove walls.</li>
+            <li>Use <strong>Set start</strong> and <strong>Set goal</strong> modes to move start and goal.</li>
+            <li>Click <strong>Train 500</strong> until arrows form a path around obstacles.</li>
+            <li>Click <strong>Run policy</strong> to let the trained Q-table control the agent.</li>
+            <li>Use <strong>Reset Q-table</strong> after changing walls, start, or goal.</li>
+          </ol>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const GRID_SIZE = 8;
+    const NUM_STATES = GRID_SIZE * GRID_SIZE;
+    const ACTIONS = ["U", "D", "L", "R"];
+    const ARROWS = { U: "↑", D: "↓", L: "←", R: "→" };
+    const LABELS = { U: "Up", D: "Down", L: "Left", R: "Right" };
+
+    let startState = 0;
+    let goalState = 63;
+    let agentState = startState;
+    let selectedState = startState;
+    let clickMode = "obstacle";
+    let episodes = 0;
+    let stepsTaken = 0;
+    let running = false;
+    let timer = null;
+
+    let alpha = 0.30;
+    let gamma = 0.90;
+    let epsilon = 0.20;
+
+    const obstacles = new Set([10, 11, 12, 18, 26, 34, 42, 43, 44, 45]);
+    let qTable = createEmptyQTable();
+
+    const grid = document.getElementById("grid");
+    const statusBox = document.getElementById("statusBox");
+    const startLabel = document.getElementById("startLabel");
+    const goalLabel = document.getElementById("goalLabel");
+
+    document.querySelectorAll(".modeBtn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        clickMode = btn.dataset.mode;
+        updateModeButtons();
+      });
+    });
+
+    document.getElementById("clearObstaclesBtn").addEventListener("click", () => {
+      obstacles.clear();
+      resetQTable();
+    });
+
+    document.getElementById("trainOneBtn").addEventListener("click", () => {
+      trainEpisode();
+      render();
+    });
+
+    document.getElementById("trainManyBtn").addEventListener("click", () => {
+      for (let i = 0; i < 500; i++) trainEpisode();
+      render();
+    });
+
+    document.getElementById("runBtn").addEventListener("click", runPolicy);
+    document.getElementById("resetAgentBtn").addEventListener("click", resetAgent);
+    document.getElementById("resetQBtn").addEventListener("click", resetQTable);
+
+    document.getElementById("alphaSlider").addEventListener("input", e => {
+      alpha = Number(e.target.value);
+      document.getElementById("alphaLabel").textContent = alpha.toFixed(2);
+    });
+
+    document.getElementById("gammaSlider").addEventListener("input", e => {
+      gamma = Number(e.target.value);
+      document.getElementById("gammaLabel").textContent = gamma.toFixed(2);
+    });
+
+    document.getElementById("epsilonSlider").addEventListener("input", e => {
+      epsilon = Number(e.target.value);
+      document.getElementById("epsilonLabel").textContent = epsilon.toFixed(2);
+    });
+
+    function createEmptyQTable() {
+      return Array.from({ length: NUM_STATES }, () => ({ U: 0, D: 0, L: 0, R: 0 }));
+    }
+
+    function rowCol(state) {
+      return { row: Math.floor(state / GRID_SIZE), col: state % GRID_SIZE };
+    }
+
+    function stateId(row, col) {
+      return row * GRID_SIZE + col;
+    }
+
+    function isBlocked(state) {
+      return obstacles.has(state);
+    }
+
+    function move(state, action) {
+      const { row, col } = rowCol(state);
+      let r = row;
+      let c = col;
+
+      if (action === "U") r--;
+      if (action === "D") r++;
+      if (action === "L") c--;
+      if (action === "R") c++;
+
+      if (r < 0 || r >= GRID_SIZE || c < 0 || c >= GRID_SIZE) {
+        return { nextState: state, hitWall: true };
+      }
+
+      const next = stateId(r, c);
+      if (isBlocked(next)) {
+        return { nextState: state, hitWall: true };
+      }
+
+      return { nextState: next, hitWall: false };
+    }
+
+    function rewardFor(nextState, hitWall) {
+      if (hitWall) return -1.0;
+      if (nextState === goalState) return 10.0;
+      return -0.04;
+    }
+
+    function bestAction(state) {
+      const q = qTable[state];
+      return ACTIONS.reduce((best, action) => q[action] > q[best] ? action : best);
+    }
+
+    function maxQ(state) {
+      const q = qTable[state];
+      return Math.max(q.U, q.D, q.L, q.R);
+    }
+
+    function chooseAction(state) {
+      if (Math.random() < epsilon) {
+        return ACTIONS[Math.floor(Math.random() * ACTIONS.length)];
+      }
+      return bestAction(state);
+    }
+
+    function trainEpisode() {
+      let state = startState;
+      const maxSteps = 200;
+
+      for (let step = 0; step < maxSteps; step++) {
+        if (state === goalState) break;
+
+        const action = chooseAction(state);
+        const result = move(state, action);
+        const reward = rewardFor(result.nextState, result.hitWall);
+
+        const oldValue = qTable[state][action];
+        const target = reward + gamma * maxQ(result.nextState);
+        qTable[state][action] = oldValue + alpha * (target - oldValue);
+
+        state = result.nextState;
+        stepsTaken++;
+      }
+
+      episodes++;
+    }
+
+    function runPolicy() {
+      if (running) return;
+      running = true;
+      agentState = startState;
+      render();
+
+      timer = setInterval(() => {
+        if (agentState === goalState) {
+          clearInterval(timer);
+          running = false;
+          renderStatus("Goal reached by following the learned Q-table policy.");
+          return;
+        }
+
+        const action = bestAction(agentState);
+        const result = move(agentState, action);
+
+        if (result.nextState === agentState) {
+          clearInterval(timer);
+          running = false;
+          renderStatus("Policy got stuck. Train more episodes or adjust obstacles.");
+          return;
+        }
+
+        selectedState = agentState;
+        agentState = result.nextState;
+        render();
+      }, 400);
+    }
+
+    function resetAgent() {
+      clearInterval(timer);
+      running = false;
+      agentState = startState;
+      selectedState = startState;
+      render();
+    }
+
+    function resetQTable() {
+      clearInterval(timer);
+      running = false;
+      qTable = createEmptyQTable();
+      agentState = startState;
+      selectedState = startState;
+      episodes = 0;
+      stepsTaken = 0;
+      render();
+    }
+
+    function handleCellClick(state) {
+      if (clickMode === "obstacle") {
+        if (state !== startState && state !== goalState) {
+          if (obstacles.has(state)) obstacles.delete(state);
+          else obstacles.add(state);
+          resetQTable();
+        }
+      }
+
+      if (clickMode === "start") {
+        if (!obstacles.has(state) && state !== goalState) {
+          // Changing the start state does NOT change the environment.
+          // The existing Q-table can still be reused from the new start.
+          startState = state;
+          agentState = state;
+          selectedState = state;
+          clearInterval(timer);
+          running = false;
+          render();
+        }
+      }
+
+      if (clickMode === "goal") {
+        if (!obstacles.has(state) && state !== startState) {
+          goalState = state;
+          selectedState = state;
+          resetQTable();
+        }
+      }
+    }
+
+    function updateModeButtons() {
+      document.querySelectorAll(".modeBtn").forEach(btn => {
+        const active = btn.dataset.mode === clickMode;
+        btn.className = active
+          ? "modeBtn rounded-2xl bg-slate-900 px-3 py-2 font-semibold text-white"
+          : "modeBtn rounded-2xl border border-slate-300 bg-white px-3 py-2 font-semibold hover:bg-slate-100";
+      });
+    }
+
+    function renderGrid() {
+      grid.innerHTML = "";
+
+      for (let state = 0; state < NUM_STATES; state++) {
+        const q = qTable[state];
+        const blocked = obstacles.has(state);
+        const isStart = state === startState;
+        const isGoal = state === goalState;
+        const hasAgent = state === agentState;
+        const selected = state === selectedState;
+        const action = blocked || isGoal ? null : bestAction(state);
+
+        const cell = document.createElement("button");
+        cell.className = [
+          "relative aspect-square rounded-2xl border p-1 text-xs transition hover:scale-[1.02] hover:shadow-md",
+          blocked ? "border-slate-400 bg-slate-300" : "border-slate-200 bg-white",
+          selected ? "ring-2 ring-slate-900" : "",
+          isStart ? "ring-2 ring-blue-500" : "",
+          isGoal ? "ring-2 ring-emerald-500" : ""
+        ].join(" ");
+
+        if (blocked) {
+          cell.innerHTML = `
+            <div class="absolute left-2 top-1 font-semibold text-slate-600">S${state}</div>
+            <div class="flex h-full items-center justify-center text-lg font-black text-slate-600">WALL</div>
+          `;
+        } else {
+          cell.innerHTML = `
+            <div class="absolute left-2 top-1 font-semibold text-slate-500">S${state}</div>
+            <div class="grid h-full grid-cols-3 grid-rows-3 items-center justify-items-center pt-3">
+              <span class="${action === "U" ? "font-bold text-slate-950" : "text-slate-500"}">${q.U.toFixed(1)}</span>
+              <span></span><span></span>
+              <span class="${action === "L" ? "font-bold text-slate-950" : "text-slate-500"}">${q.L.toFixed(1)}</span>
+              <span class="text-2xl font-black ${isGoal ? "text-emerald-600" : "text-slate-800"}">${isGoal ? "★" : ARROWS[action]}</span>
+              <span class="${action === "R" ? "font-bold text-slate-950" : "text-slate-500"}">${q.R.toFixed(1)}</span>
+              <span></span>
+              <span class="${action === "D" ? "font-bold text-slate-950" : "text-slate-500"}">${q.D.toFixed(1)}</span>
+              <span></span>
+            </div>
+            ${hasAgent ? `<div class="absolute inset-0 flex items-center justify-center"><div class="h-7 w-7 rounded-full bg-blue-600 shadow-lg ring-4 ring-blue-200"></div></div>` : ""}
+            <div class="absolute bottom-1 left-1 flex gap-1">
+              ${isStart ? `<span class="rounded-full bg-blue-600 px-1 py-0 text-[10px] font-semibold text-white">Start</span>` : ""}
+              ${isGoal ? `<span class="rounded-full bg-emerald-600 px-1 py-0 text-[10px] font-semibold text-white">Goal</span>` : ""}
+            </div>
+          `;
+        }
+
+        cell.addEventListener("click", () => handleCellClick(state));
+        grid.appendChild(cell);
+      }
+    }
+
+    function renderStatus(extra = "") {
+      const q = qTable[selectedState];
+      const action = obstacles.has(selectedState) || selectedState === goalState ? "None" : bestAction(selectedState);
+
+      startLabel.textContent = `S${startState}`;
+      goalLabel.textContent = `S${goalState}`;
+
+      statusBox.innerHTML = `
+        ${extra ? `<p class="mb-2 font-semibold">${extra}</p>` : ""}
+        <p>Episodes trained: <strong>${episodes}</strong></p>
+        <p>Total learning steps: <strong>${stepsTaken}</strong></p>
+        <p>Selected state: <strong>S${selectedState}</strong></p>
+        <p>Best action: <strong>${action === "None" ? "None" : LABELS[action] + " " + ARROWS[action]}</strong></p>
+        <div class="mt-3 grid grid-cols-2 gap-2">
+          <div class="rounded-xl bg-white p-2">Up: <strong>${q.U.toFixed(2)}</strong></div>
+          <div class="rounded-xl bg-white p-2">Down: <strong>${q.D.toFixed(2)}</strong></div>
+          <div class="rounded-xl bg-white p-2">Left: <strong>${q.L.toFixed(2)}</strong></div>
+          <div class="rounded-xl bg-white p-2">Right: <strong>${q.R.toFixed(2)}</strong></div>
+        </div>
+      `;
+    }
+
+    function render() {
+      renderGrid();
+      renderStatus();
+      updateModeButtons();
+    }
+
+    render();
+  </script>
+</body>
+</html>
