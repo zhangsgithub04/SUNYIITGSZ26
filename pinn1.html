@@ -1,0 +1,233 @@
+import React, { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ChevronRight, Brain, Sigma, LineChart, Code2, CheckCircle2 } from "lucide-react";
+
+const steps = [
+  {
+    title: "1. Define the problem",
+    icon: CheckCircle2,
+    summary: "We want a function u(x) that satisfies both the differential equation and the boundary condition.",
+    formula: "u'(x) + u(x) = 0,   u(0)=1",
+    explanation:
+      "The neural network does not learn from many labeled examples. Instead, it learns by being punished whenever its output violates the physics equation or the boundary condition."
+  },
+  {
+    title: "2. Build a neural network",
+    icon: Brain,
+    summary: "The network takes x as input and outputs an approximation uθ(x).",
+    formula: "x → neural network → uθ(x)",
+    explanation:
+      "The network represents a flexible function. During training, its weights are adjusted until the function behaves like the solution of the differential equation."
+  },
+  {
+    title: "3. Pick collocation points",
+    icon: LineChart,
+    summary: "Choose many points in [0,1] where the physics equation should hold.",
+    formula: "x₁, x₂, ..., xₙ ∈ [0,1]",
+    explanation:
+      "These are not labeled data points. They are locations where we test whether the model obeys the equation u'(x)+u(x)=0."
+  },
+  {
+    title: "4. Compute the physics residual",
+    icon: Sigma,
+    summary: "At every point, measure how badly the model violates the equation.",
+    formula: "r(xᵢ) = uθ'(xᵢ) + uθ(xᵢ)",
+    explanation:
+      "If the network is perfect, the residual is zero everywhere. A large residual means the predicted function does not obey the differential equation at that point."
+  },
+  {
+    title: "5. Convert many residuals into one loss",
+    icon: Sigma,
+    summary: "The mean squared residual gives one scalar number for the optimizer.",
+    formula: "Physics loss = mean(r(xᵢ)²)",
+    explanation:
+      "The model has many errors, one at each collocation point. The optimizer needs one scalar loss, so we square the errors and average them. This is why mean() appears in the code."
+  },
+  {
+    title: "6. Add the boundary condition loss",
+    icon: CheckCircle2,
+    summary: "The model must also satisfy u(0)=1.",
+    formula: "BC loss = (uθ(0) - 1)²",
+    explanation:
+      "The physics equation alone has many possible scaled solutions. The boundary condition selects the correct one: u(x)=exp(-x)."
+  },
+  {
+    title: "7. Train the model",
+    icon: Code2,
+    summary: "Backpropagation updates the network to reduce total loss.",
+    formula: "Total loss = Physics loss + BC loss",
+    explanation:
+      "Each epoch computes the loss, calculates gradients, and uses Adam to update the neural network weights. Over time, the prediction approaches exp(-x)."
+  }
+];
+
+const codeSnippets = {
+  residual: `u = model(x_phys)\ndu_dx = torch.autograd.grad(\n    u, x_phys,\n    grad_outputs=torch.ones_like(u),\n    create_graph=True\n)[0]\nphysics_residual = du_dx + u`,
+  mean: `physics_loss = torch.mean(physics_residual**2)` ,
+  bc: `bc_loss = torch.mean((model(x0) - u0)**2)` ,
+  total: `loss = physics_loss + bc_loss\nloss.backward()\noptimizer.step()`
+};
+
+function ResidualDemo() {
+  const [residuals, setResiduals] = useState([0.30, -0.15, 0.08, -0.04, 0.02]);
+  const squared = residuals.map((r) => r * r);
+  const mean = squared.reduce((a, b) => a + b, 0) / squared.length;
+  const sum = squared.reduce((a, b) => a + b, 0);
+
+  const improve = () => setResiduals((vals) => vals.map((v) => Number((v * 0.65).toFixed(4))));
+  const reset = () => setResiduals([0.30, -0.15, 0.08, -0.04, 0.02]);
+
+  return (
+    <Card className="rounded-2xl shadow-sm border-slate-200">
+      <CardContent className="p-6">
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-xl font-semibold">Why do we calculate the mean?</h3>
+            <p className="text-slate-600 mt-1">A model has one residual at each collocation point. We need one loss value.</p>
+          </div>
+          <Badge variant="secondary">interactive</Badge>
+        </div>
+
+        <div className="grid md:grid-cols-5 gap-3 mb-5">
+          {residuals.map((r, i) => (
+            <div key={i} className="rounded-xl bg-slate-50 p-3 text-center border">
+              <div className="text-xs text-slate-500">r(x{i + 1})</div>
+              <div className="text-lg font-semibold">{r}</div>
+              <div className="text-xs text-slate-500 mt-1">squared: {squared[i].toFixed(4)}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="rounded-xl bg-white border p-4">
+            <div className="text-sm text-slate-500">Sum of squared residuals</div>
+            <div className="text-2xl font-bold">{sum.toFixed(5)}</div>
+            <p className="text-sm text-slate-600 mt-2">Using sum makes the loss grow when you add more points.</p>
+          </div>
+          <div className="rounded-xl bg-white border p-4">
+            <div className="text-sm text-slate-500">Mean squared residual</div>
+            <div className="text-2xl font-bold">{mean.toFixed(5)}</div>
+            <p className="text-sm text-slate-600 mt-2">Using mean gives the average physics error per point.</p>
+          </div>
+        </div>
+
+        <div className="flex gap-3 mt-5">
+          <Button onClick={improve}>Simulate training step</Button>
+          <Button variant="outline" onClick={reset}>Reset</Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function CodeBlock({ children }) {
+  return (
+    <pre className="overflow-x-auto rounded-xl bg-slate-950 text-slate-50 p-4 text-sm leading-relaxed">
+      <code>{children}</code>
+    </pre>
+  );
+}
+
+export default function PINNExplainerPage() {
+  const [selected, setSelected] = useState(0);
+  const current = steps[selected];
+  const Icon = current.icon;
+
+  const progress = useMemo(() => ((selected + 1) / steps.length) * 100, [selected]);
+
+  return (
+    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
+      <section className="max-w-6xl mx-auto px-6 py-10">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="mb-8"
+        >
+          <Badge className="mb-4">Physics-Informed Neural Network</Badge>
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Step-by-step PINN explanation</h1>
+          <p className="text-lg text-slate-600 max-w-3xl">
+            Learn how a neural network solves the differential equation <span className="font-semibold">u'(x)+u(x)=0</span> with <span className="font-semibold">u(0)=1</span>, and why the code uses <span className="font-mono">mean()</span> to compute the loss.
+          </p>
+        </motion.div>
+
+        <div className="h-2 bg-slate-200 rounded-full mb-8 overflow-hidden">
+          <motion.div className="h-full bg-slate-900" animate={{ width: `${progress}%` }} />
+        </div>
+
+        <div className="grid lg:grid-cols-[320px_1fr] gap-6">
+          <Card className="rounded-2xl shadow-sm h-fit">
+            <CardContent className="p-3">
+              {steps.map((step, i) => (
+                <button
+                  key={step.title}
+                  onClick={() => setSelected(i)}
+                  className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${
+                    selected === i ? "bg-slate-900 text-white" : "hover:bg-slate-100"
+                  }`}
+                >
+                  <step.icon className="w-5 h-5 shrink-0" />
+                  <span className="text-sm font-medium">{step.title}</span>
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+
+          <motion.div
+            key={selected}
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <Card className="rounded-2xl shadow-sm border-slate-200 mb-6">
+              <CardContent className="p-7">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="rounded-2xl bg-slate-900 text-white p-3"><Icon className="w-6 h-6" /></div>
+                  <h2 className="text-2xl font-bold">{current.title}</h2>
+                </div>
+                <p className="text-lg text-slate-700 mb-5">{current.summary}</p>
+                <div className="rounded-2xl bg-slate-50 border p-5 mb-5 font-mono text-lg">{current.formula}</div>
+                <p className="text-slate-700 leading-relaxed">{current.explanation}</p>
+
+                <div className="flex justify-between mt-7">
+                  <Button variant="outline" disabled={selected === 0} onClick={() => setSelected((s) => s - 1)}>Previous</Button>
+                  <Button disabled={selected === steps.length - 1} onClick={() => setSelected((s) => s + 1)}>
+                    Next <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <ResidualDemo />
+          </motion.div>
+        </div>
+
+        <section className="mt-10">
+          <h2 className="text-3xl font-bold mb-4">Connect the explanation to the code</h2>
+          <Tabs defaultValue="residual" className="w-full">
+            <TabsList className="grid grid-cols-2 md:grid-cols-4 mb-4">
+              <TabsTrigger value="residual">Residual</TabsTrigger>
+              <TabsTrigger value="mean">Mean loss</TabsTrigger>
+              <TabsTrigger value="bc">Boundary</TabsTrigger>
+              <TabsTrigger value="total">Training</TabsTrigger>
+            </TabsList>
+            <TabsContent value="residual"><CodeBlock>{codeSnippets.residual}</CodeBlock><p className="text-slate-700 mt-3">This computes uθ(x), then uses automatic differentiation to compute uθ'(x). The residual is the left side of the equation.</p></TabsContent>
+            <TabsContent value="mean"><CodeBlock>{codeSnippets.mean}</CodeBlock><p className="text-slate-700 mt-3">Each collocation point has an error. Squaring makes all errors positive and punishes large errors. Mean averages them into one scalar loss.</p></TabsContent>
+            <TabsContent value="bc"><CodeBlock>{codeSnippets.bc}</CodeBlock><p className="text-slate-700 mt-3">This forces the neural network to output 1 when x=0.</p></TabsContent>
+            <TabsContent value="total"><CodeBlock>{codeSnippets.total}</CodeBlock><p className="text-slate-700 mt-3">The total loss is minimized by backpropagation and Adam. Lower loss means better agreement with the equation and boundary condition.</p></TabsContent>
+          </Tabs>
+        </section>
+
+        <section className="mt-10 grid md:grid-cols-3 gap-4">
+          <Card className="rounded-2xl shadow-sm"><CardContent className="p-5"><h3 className="font-bold text-lg mb-2">Regular neural network</h3><p className="text-slate-600">Learns mostly from labeled data: input-output examples.</p></CardContent></Card>
+          <Card className="rounded-2xl shadow-sm"><CardContent className="p-5"><h3 className="font-bold text-lg mb-2">PINN</h3><p className="text-slate-600">Learns from equations, boundary conditions, and sometimes data.</p></CardContent></Card>
+          <Card className="rounded-2xl shadow-sm"><CardContent className="p-5"><h3 className="font-bold text-lg mb-2">Result</h3><p className="text-slate-600">The trained network approximates the true solution u(x)=exp(-x).</p></CardContent></Card>
+        </section>
+      </section>
+    </main>
+  );
+}
