@@ -1,233 +1,535 @@
-import React, { useMemo, useState } from "react";
-import { motion } from "framer-motion";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ChevronRight, Brain, Sigma, LineChart, Code2, CheckCircle2 } from "lucide-react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Step-by-Step PINN Explanation</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #0f172a;
+      --soft: #f1f5f9;
+    }
 
-const steps = [
-  {
-    title: "1. Define the problem",
-    icon: CheckCircle2,
-    summary: "We want a function u(x) that satisfies both the differential equation and the boundary condition.",
-    formula: "u'(x) + u(x) = 0,   u(0)=1",
-    explanation:
-      "The neural network does not learn from many labeled examples. Instead, it learns by being punished whenever its output violates the physics equation or the boundary condition."
-  },
-  {
-    title: "2. Build a neural network",
-    icon: Brain,
-    summary: "The network takes x as input and outputs an approximation uθ(x).",
-    formula: "x → neural network → uθ(x)",
-    explanation:
-      "The network represents a flexible function. During training, its weights are adjusted until the function behaves like the solution of the differential equation."
-  },
-  {
-    title: "3. Pick collocation points",
-    icon: LineChart,
-    summary: "Choose many points in [0,1] where the physics equation should hold.",
-    formula: "x₁, x₂, ..., xₙ ∈ [0,1]",
-    explanation:
-      "These are not labeled data points. They are locations where we test whether the model obeys the equation u'(x)+u(x)=0."
-  },
-  {
-    title: "4. Compute the physics residual",
-    icon: Sigma,
-    summary: "At every point, measure how badly the model violates the equation.",
-    formula: "r(xᵢ) = uθ'(xᵢ) + uθ(xᵢ)",
-    explanation:
-      "If the network is perfect, the residual is zero everywhere. A large residual means the predicted function does not obey the differential equation at that point."
-  },
-  {
-    title: "5. Convert many residuals into one loss",
-    icon: Sigma,
-    summary: "The mean squared residual gives one scalar number for the optimizer.",
-    formula: "Physics loss = mean(r(xᵢ)²)",
-    explanation:
-      "The model has many errors, one at each collocation point. The optimizer needs one scalar loss, so we square the errors and average them. This is why mean() appears in the code."
-  },
-  {
-    title: "6. Add the boundary condition loss",
-    icon: CheckCircle2,
-    summary: "The model must also satisfy u(0)=1.",
-    formula: "BC loss = (uθ(0) - 1)²",
-    explanation:
-      "The physics equation alone has many possible scaled solutions. The boundary condition selects the correct one: u(x)=exp(-x)."
-  },
-  {
-    title: "7. Train the model",
-    icon: Code2,
-    summary: "Backpropagation updates the network to reduce total loss.",
-    formula: "Total loss = Physics loss + BC loss",
-    explanation:
-      "Each epoch computes the loss, calculates gradients, and uses Adam to update the neural network weights. Over time, the prediction approaches exp(-x)."
-  }
-];
+    * { box-sizing: border-box; }
 
-const codeSnippets = {
-  residual: `u = model(x_phys)\ndu_dx = torch.autograd.grad(\n    u, x_phys,\n    grad_outputs=torch.ones_like(u),\n    create_graph=True\n)[0]\nphysics_residual = du_dx + u`,
-  mean: `physics_loss = torch.mean(physics_residual**2)` ,
-  bc: `bc_loss = torch.mean((model(x0) - u0)**2)` ,
-  total: `loss = physics_loss + bc_loss\nloss.backward()\noptimizer.step()`
-};
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(to bottom, var(--bg), #ffffff);
+      color: var(--text);
+    }
 
-function ResidualDemo() {
-  const [residuals, setResiduals] = useState([0.30, -0.15, 0.08, -0.04, 0.02]);
-  const squared = residuals.map((r) => r * r);
-  const mean = squared.reduce((a, b) => a + b, 0) / squared.length;
-  const sum = squared.reduce((a, b) => a + b, 0);
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 42px 24px;
+    }
 
-  const improve = () => setResiduals((vals) => vals.map((v) => Number((v * 0.65).toFixed(4))));
-  const reset = () => setResiduals([0.30, -0.15, 0.08, -0.04, 0.02]);
+    .badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: white;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 18px;
+    }
 
-  return (
-    <Card className="rounded-2xl shadow-sm border-slate-200">
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div>
-            <h3 className="text-xl font-semibold">Why do we calculate the mean?</h3>
-            <p className="text-slate-600 mt-1">A model has one residual at each collocation point. We need one loss value.</p>
-          </div>
-          <Badge variant="secondary">interactive</Badge>
-        </div>
+    h1 {
+      font-size: clamp(36px, 6vw, 58px);
+      line-height: 1.02;
+      margin: 0 0 18px;
+      letter-spacing: -0.04em;
+    }
 
-        <div className="grid md:grid-cols-5 gap-3 mb-5">
-          {residuals.map((r, i) => (
-            <div key={i} className="rounded-xl bg-slate-50 p-3 text-center border">
-              <div className="text-xs text-slate-500">r(x{i + 1})</div>
-              <div className="text-lg font-semibold">{r}</div>
-              <div className="text-xs text-slate-500 mt-1">squared: {squared[i].toFixed(4)}</div>
-            </div>
-          ))}
-        </div>
+    h2 {
+      font-size: 28px;
+      margin: 0 0 16px;
+    }
 
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="rounded-xl bg-white border p-4">
-            <div className="text-sm text-slate-500">Sum of squared residuals</div>
-            <div className="text-2xl font-bold">{sum.toFixed(5)}</div>
-            <p className="text-sm text-slate-600 mt-2">Using sum makes the loss grow when you add more points.</p>
-          </div>
-          <div className="rounded-xl bg-white border p-4">
-            <div className="text-sm text-slate-500">Mean squared residual</div>
-            <div className="text-2xl font-bold">{mean.toFixed(5)}</div>
-            <p className="text-sm text-slate-600 mt-2">Using mean gives the average physics error per point.</p>
-          </div>
-        </div>
+    h3 {
+      margin: 0 0 8px;
+      font-size: 20px;
+    }
 
-        <div className="flex gap-3 mt-5">
-          <Button onClick={improve}>Simulate training step</Button>
-          <Button variant="outline" onClick={reset}>Reset</Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+    p {
+      color: var(--muted);
+      line-height: 1.65;
+    }
 
-function CodeBlock({ children }) {
-  return (
-    <pre className="overflow-x-auto rounded-xl bg-slate-950 text-slate-50 p-4 text-sm leading-relaxed">
-      <code>{children}</code>
-    </pre>
-  );
-}
+    .hero-text {
+      max-width: 760px;
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
 
-export default function PINNExplainerPage() {
-  const [selected, setSelected] = useState(0);
-  const current = steps[selected];
-  const Icon = current.icon;
+    .progress-wrap {
+      height: 9px;
+      background: #dbe3ee;
+      border-radius: 999px;
+      overflow: hidden;
+      margin: 28px 0;
+    }
 
-  const progress = useMemo(() => ((selected + 1) / steps.length) * 100, [selected]);
+    .progress-bar {
+      height: 100%;
+      width: 14.28%;
+      background: var(--accent);
+      transition: width 0.25s ease;
+    }
 
-  return (
-    <main className="min-h-screen bg-gradient-to-b from-slate-50 to-white text-slate-900">
-      <section className="max-w-6xl mx-auto px-6 py-10">
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="mb-8"
-        >
-          <Badge className="mb-4">Physics-Informed Neural Network</Badge>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">Step-by-step PINN explanation</h1>
-          <p className="text-lg text-slate-600 max-w-3xl">
-            Learn how a neural network solves the differential equation <span className="font-semibold">u'(x)+u(x)=0</span> with <span className="font-semibold">u(0)=1</span>, and why the code uses <span className="font-mono">mean()</span> to compute the loss.
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.04);
+    }
+
+    .nav-card {
+      padding: 12px;
+      position: sticky;
+      top: 18px;
+    }
+
+    .step-button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      padding: 14px;
+      border-radius: 16px;
+      cursor: pointer;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: 0.2s ease;
+    }
+
+    .step-button:hover { background: var(--soft); }
+    .step-button.active { background: var(--accent); color: white; }
+
+    .content-card { padding: 30px; margin-bottom: 24px; }
+
+    .icon-box {
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      background: var(--accent);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-size: 24px;
+      margin-bottom: 16px;
+    }
+
+    .formula {
+      padding: 18px;
+      border-radius: 18px;
+      background: var(--soft);
+      border: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 18px;
+      margin: 20px 0;
+    }
+
+    .button-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 26px;
+    }
+
+    button.action {
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: white;
+      padding: 11px 16px;
+      border-radius: 14px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button.action.secondary {
+      background: white;
+      color: var(--accent);
+    }
+
+    button.action:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .residual-card { padding: 26px; }
+
+    .residual-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin: 20px 0;
+    }
+
+    .mini-box {
+      background: var(--soft);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      text-align: center;
+    }
+
+    .mini-label {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .mini-value {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 4px 0;
+    }
+
+    .loss-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .loss-box {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+    }
+
+    .loss-value {
+      font-size: 30px;
+      font-weight: 900;
+      margin: 6px 0;
+    }
+
+    .tabs {
+      margin-top: 42px;
+    }
+
+    .tab-buttons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tab-button {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: white;
+      cursor: pointer;
+      font-weight: 800;
+    }
+
+    .tab-button.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
+
+    pre {
+      background: #020617;
+      color: #f8fafc;
+      padding: 20px;
+      border-radius: 18px;
+      overflow-x: auto;
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .comparison {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 42px;
+    }
+
+    .comparison .card { padding: 22px; }
+
+    .fade {
+      animation: fade 0.25s ease;
+    }
+
+    @keyframes fade {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      .nav-card { position: static; }
+      .residual-grid { grid-template-columns: repeat(2, 1fr); }
+      .loss-grid, .comparison, .tab-buttons { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="badge">Physics-Informed Neural Network</span>
+    <h1>Step-by-step PINN explanation</h1>
+    <p class="hero-text">
+      This page explains how a neural network solves
+      <strong>u'(x) + u(x) = 0</strong> with <strong>u(0)=1</strong>,
+      why <code>physics_residual</code> is an array, and why <code>mean()</code>
+      is used to turn many residuals into one scalar loss.
+    </p>
+
+    <div class="progress-wrap">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <section class="layout">
+      <aside class="card nav-card" id="stepNav"></aside>
+
+      <section>
+        <article class="card content-card fade" id="stepContent"></article>
+        <article class="card residual-card">
+          <h2>Why is the mean calculated?</h2>
+          <p>
+            The model checks the differential equation at many collocation points.
+            So the residual is not one number. It is an array of errors:
           </p>
-        </motion.div>
+          <div class="formula">physics_residual = [r(x₁), r(x₂), ..., r(xₙ)]</div>
 
-        <div className="h-2 bg-slate-200 rounded-full mb-8 overflow-hidden">
-          <motion.div className="h-full bg-slate-900" animate={{ width: `${progress}%` }} />
-        </div>
+          <div class="residual-grid" id="residualGrid"></div>
 
-        <div className="grid lg:grid-cols-[320px_1fr] gap-6">
-          <Card className="rounded-2xl shadow-sm h-fit">
-            <CardContent className="p-3">
-              {steps.map((step, i) => (
-                <button
-                  key={step.title}
-                  onClick={() => setSelected(i)}
-                  className={`w-full text-left p-3 rounded-xl transition flex items-center gap-3 ${
-                    selected === i ? "bg-slate-900 text-white" : "hover:bg-slate-100"
-                  }`}
-                >
-                  <step.icon className="w-5 h-5 shrink-0" />
-                  <span className="text-sm font-medium">{step.title}</span>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
+          <div class="loss-grid">
+            <div class="loss-box">
+              <div class="mini-label">Sum of squared residuals</div>
+              <div class="loss-value" id="sumLoss"></div>
+              <p>Using sum makes the loss larger when you use more collocation points.</p>
+            </div>
+            <div class="loss-box">
+              <div class="mini-label">Mean squared residual</div>
+              <div class="loss-value" id="meanLoss"></div>
+              <p>Using mean gives the average physics error per point.</p>
+            </div>
+          </div>
 
-          <motion.div
-            key={selected}
-            initial={{ opacity: 0, x: 16 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            <Card className="rounded-2xl shadow-sm border-slate-200 mb-6">
-              <CardContent className="p-7">
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="rounded-2xl bg-slate-900 text-white p-3"><Icon className="w-6 h-6" /></div>
-                  <h2 className="text-2xl font-bold">{current.title}</h2>
-                </div>
-                <p className="text-lg text-slate-700 mb-5">{current.summary}</p>
-                <div className="rounded-2xl bg-slate-50 border p-5 mb-5 font-mono text-lg">{current.formula}</div>
-                <p className="text-slate-700 leading-relaxed">{current.explanation}</p>
-
-                <div className="flex justify-between mt-7">
-                  <Button variant="outline" disabled={selected === 0} onClick={() => setSelected((s) => s - 1)}>Previous</Button>
-                  <Button disabled={selected === steps.length - 1} onClick={() => setSelected((s) => s + 1)}>
-                    Next <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <ResidualDemo />
-          </motion.div>
-        </div>
-
-        <section className="mt-10">
-          <h2 className="text-3xl font-bold mb-4">Connect the explanation to the code</h2>
-          <Tabs defaultValue="residual" className="w-full">
-            <TabsList className="grid grid-cols-2 md:grid-cols-4 mb-4">
-              <TabsTrigger value="residual">Residual</TabsTrigger>
-              <TabsTrigger value="mean">Mean loss</TabsTrigger>
-              <TabsTrigger value="bc">Boundary</TabsTrigger>
-              <TabsTrigger value="total">Training</TabsTrigger>
-            </TabsList>
-            <TabsContent value="residual"><CodeBlock>{codeSnippets.residual}</CodeBlock><p className="text-slate-700 mt-3">This computes uθ(x), then uses automatic differentiation to compute uθ'(x). The residual is the left side of the equation.</p></TabsContent>
-            <TabsContent value="mean"><CodeBlock>{codeSnippets.mean}</CodeBlock><p className="text-slate-700 mt-3">Each collocation point has an error. Squaring makes all errors positive and punishes large errors. Mean averages them into one scalar loss.</p></TabsContent>
-            <TabsContent value="bc"><CodeBlock>{codeSnippets.bc}</CodeBlock><p className="text-slate-700 mt-3">This forces the neural network to output 1 when x=0.</p></TabsContent>
-            <TabsContent value="total"><CodeBlock>{codeSnippets.total}</CodeBlock><p className="text-slate-700 mt-3">The total loss is minimized by backpropagation and Adam. Lower loss means better agreement with the equation and boundary condition.</p></TabsContent>
-          </Tabs>
-        </section>
-
-        <section className="mt-10 grid md:grid-cols-3 gap-4">
-          <Card className="rounded-2xl shadow-sm"><CardContent className="p-5"><h3 className="font-bold text-lg mb-2">Regular neural network</h3><p className="text-slate-600">Learns mostly from labeled data: input-output examples.</p></CardContent></Card>
-          <Card className="rounded-2xl shadow-sm"><CardContent className="p-5"><h3 className="font-bold text-lg mb-2">PINN</h3><p className="text-slate-600">Learns from equations, boundary conditions, and sometimes data.</p></CardContent></Card>
-          <Card className="rounded-2xl shadow-sm"><CardContent className="p-5"><h3 className="font-bold text-lg mb-2">Result</h3><p className="text-slate-600">The trained network approximates the true solution u(x)=exp(-x).</p></CardContent></Card>
-        </section>
+          <div class="button-row">
+            <button class="action" onclick="simulateTrainingStep()">Simulate training step</button>
+            <button class="action secondary" onclick="resetResiduals()">Reset</button>
+          </div>
+        </article>
       </section>
-    </main>
-  );
-}
+    </section>
+
+    <section class="tabs">
+      <h2>Connect the explanation to the code</h2>
+      <div class="tab-buttons" id="tabButtons"></div>
+      <div class="card content-card" id="tabContent"></div>
+    </section>
+
+    <section class="comparison">
+      <div class="card">
+        <h3>Regular neural network</h3>
+        <p>Learns mostly from labeled examples, such as input-output pairs.</p>
+      </div>
+      <div class="card">
+        <h3>PINN</h3>
+        <p>Learns from physics equations, boundary conditions, and sometimes data.</p>
+      </div>
+      <div class="card">
+        <h3>Result</h3>
+        <p>The trained network approximates the true solution u(x)=exp(-x).</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const steps = [
+      {
+        icon: "✓",
+        title: "1. Define the problem",
+        summary: "We want a function u(x) that satisfies both the differential equation and the boundary condition.",
+        formula: "u'(x) + u(x) = 0,   u(0)=1",
+        explanation: "The neural network does not learn from many labeled examples. Instead, it learns by being punished whenever its output violates the physics equation or the boundary condition."
+      },
+      {
+        icon: "🧠",
+        title: "2. Build a neural network",
+        summary: "The network takes x as input and outputs an approximation uθ(x).",
+        formula: "x → neural network → uθ(x)",
+        explanation: "The network represents a flexible function. During training, its weights are adjusted until the function behaves like the solution of the differential equation."
+      },
+      {
+        icon: "📍",
+        title: "3. Pick collocation points",
+        summary: "Choose many points in [0,1] where the physics equation should hold.",
+        formula: "x₁, x₂, ..., xₙ ∈ [0,1]",
+        explanation: "These are not labeled data points. They are locations where we test whether the model obeys u'(x)+u(x)=0."
+      },
+      {
+        icon: "Σ",
+        title: "4. Compute the physics residual",
+        summary: "At every point, measure how badly the model violates the equation.",
+        formula: "r(xᵢ) = uθ'(xᵢ) + uθ(xᵢ)",
+        explanation: "If the network is perfect, the residual is zero everywhere. A large residual means the predicted function does not obey the equation at that point."
+      },
+      {
+        icon: "μ",
+        title: "5. Convert residuals into one loss",
+        summary: "The mean squared residual gives one scalar number for the optimizer.",
+        formula: "Physics loss = mean(r(xᵢ)²)",
+        explanation: "The model has many errors, one at each collocation point. The optimizer needs one scalar loss, so we square the errors and average them. This is why mean() appears in the code."
+      },
+      {
+        icon: "🎯",
+        title: "6. Add boundary condition loss",
+        summary: "The model must also satisfy u(0)=1.",
+        formula: "BC loss = (uθ(0) - 1)²",
+        explanation: "The physics equation alone has many possible scaled solutions. The boundary condition selects the correct one: u(x)=exp(-x)."
+      },
+      {
+        icon: "⚙️",
+        title: "7. Train the model",
+        summary: "Backpropagation updates the network to reduce total loss.",
+        formula: "Total loss = Physics loss + BC loss",
+        explanation: "Each epoch computes the loss, calculates gradients, and uses Adam to update the neural network weights. Over time, the prediction approaches exp(-x)."
+      }
+    ];
+
+    const tabs = {
+      residual: {
+        title: "Residual",
+        code: `u = model(x_phys)\ndu_dx = torch.autograd.grad(\n    u, x_phys,\n    grad_outputs=torch.ones_like(u),\n    create_graph=True\n)[0]\nphysics_residual = du_dx + u`,
+        text: "This computes uθ(x), then uses automatic differentiation to compute uθ'(x). The residual is the left side of the equation."
+      },
+      mean: {
+        title: "Mean loss",
+        code: `physics_loss = torch.mean(physics_residual**2)`,
+        text: "Each collocation point has an error. Squaring makes all errors positive and punishes large errors. Mean averages them into one scalar loss."
+      },
+      boundary: {
+        title: "Boundary",
+        code: `bc_loss = torch.mean((model(x0) - u0)**2)`,
+        text: "This forces the neural network to output 1 when x=0. With only one boundary point, mean is not mathematically necessary, but it keeps the loss style consistent."
+      },
+      training: {
+        title: "Training",
+        code: `loss = physics_loss + bc_loss\nloss.backward()\noptimizer.step()`,
+        text: "The total loss is minimized by backpropagation and Adam. Lower loss means better agreement with the equation and boundary condition."
+      }
+    };
+
+    let currentStep = 0;
+    let currentTab = "residual";
+    let residuals = [0.30, -0.15, 0.08, -0.04, 0.02];
+
+    function renderSteps() {
+      const nav = document.getElementById("stepNav");
+      nav.innerHTML = steps.map((step, index) => `
+        <button class="step-button ${index === currentStep ? "active" : ""}" onclick="setStep(${index})">
+          <span>${step.icon}</span>
+          <span>${step.title}</span>
+        </button>
+      `).join("");
+
+      const step = steps[currentStep];
+      document.getElementById("stepContent").innerHTML = `
+        <div class="icon-box">${step.icon}</div>
+        <h2>${step.title}</h2>
+        <p><strong>${step.summary}</strong></p>
+        <div class="formula">${step.formula}</div>
+        <p>${step.explanation}</p>
+        <div class="button-row">
+          <button class="action secondary" onclick="previousStep()" ${currentStep === 0 ? "disabled" : ""}>Previous</button>
+          <button class="action" onclick="nextStep()" ${currentStep === steps.length - 1 ? "disabled" : ""}>Next →</button>
+        </div>
+      `;
+
+      document.getElementById("progressBar").style.width = `${((currentStep + 1) / steps.length) * 100}%`;
+    }
+
+    function setStep(index) {
+      currentStep = index;
+      renderSteps();
+    }
+
+    function nextStep() {
+      if (currentStep < steps.length - 1) setStep(currentStep + 1);
+    }
+
+    function previousStep() {
+      if (currentStep > 0) setStep(currentStep - 1);
+    }
+
+    function renderResiduals() {
+      const squared = residuals.map(r => r * r);
+      const sum = squared.reduce((a, b) => a + b, 0);
+      const mean = sum / squared.length;
+
+      document.getElementById("residualGrid").innerHTML = residuals.map((r, i) => `
+        <div class="mini-box">
+          <div class="mini-label">r(x${i + 1})</div>
+          <div class="mini-value">${r.toFixed(4)}</div>
+          <div class="mini-label">squared: ${squared[i].toFixed(5)}</div>
+        </div>
+      `).join("");
+
+      document.getElementById("sumLoss").textContent = sum.toFixed(5);
+      document.getElementById("meanLoss").textContent = mean.toFixed(5);
+    }
+
+    function simulateTrainingStep() {
+      residuals = residuals.map(r => r * 0.65);
+      renderResiduals();
+    }
+
+    function resetResiduals() {
+      residuals = [0.30, -0.15, 0.08, -0.04, 0.02];
+      renderResiduals();
+    }
+
+    function renderTabs() {
+      const keys = Object.keys(tabs);
+      document.getElementById("tabButtons").innerHTML = keys.map(key => `
+        <button class="tab-button ${key === currentTab ? "active" : ""}" onclick="setTab('${key}')">${tabs[key].title}</button>
+      `).join("");
+
+      const tab = tabs[currentTab];
+      document.getElementById("tabContent").innerHTML = `
+        <h3>${tab.title}</h3>
+        <pre><code>${escapeHtml(tab.code)}</code></pre>
+        <p>${tab.text}</p>
+      `;
+    }
+
+    function setTab(key) {
+      currentTab = key;
+      renderTabs();
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    renderSteps();
+    renderResiduals();
+    renderTabs();
+  </script>
+</body>
+</html>
